@@ -2,15 +2,14 @@
 
 ## Goal
 
-Beijixiong Voice 的目标不是复刻 Sora 或 Bark 本身，而是做一个可本地运行、易试听、易调参的小工具：把中文转成适合英文 TTS 朗读的拼音 prompt，让 Bark 的英文 speaker preset 读出带一点异国口音的中文效果。
+Beijixiong Voice 的目标是做一个可本地运行、易试听、易调参的语音克隆工具：通过参考音频克隆声音和情绪，让 F5-TTS 生成中文语音。
 
 重点取舍：
 
 - 优先本地部署和稳定使用。
 - 优先 GUI 可用性，避免只停留在脚本示例。
-- 音色标签按实际听感命名，不把 Bark 数字 preset 误当官方性别标签。
-- 默认输出尽量流畅、有活力，而不是强行鬼畜拼写。
-- 通过情绪预设提高表达力，但不把它包装成严格可控的情感合成。
+- 声音和情绪通过参考音频克隆，文件名自动识别。
+- 保留后处理模块（停顿压缩、语速/音高调整）。
 
 ## Architecture
 
@@ -22,92 +21,57 @@ Beijixiong Voice 的目标不是复刻 Sora 或 Bark 本身，而是做一个可
 
 没有引入 Flask/FastAPI 这类额外 Web 框架，目的是让部署链路更短。GUI 后端直接复用 CLI 的核心函数，避免两套生成逻辑。
 
-## Text Pipeline
+## Reference Audio System
 
-中文输入会经历以下步骤：
+参考音频放在 `references/` 目录下，通过文件名自动识别角色和情绪：
 
-1. 标点标准化：把中文标点转换成英文标点。
-2. 拼音转换：使用 `pypinyin` 转成无声调拼音。
-3. 短语连读：把连续中文片段按 2 到 3 个音节分组，例如：
+- 文件名格式：`{character}_{emotion}.{ext}`
+- 支持格式：`.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`
+- 可选的 `.txt` 参考文本文件与音频同名
 
-```text
-大家好，我是北极熊。今天我来读中文。
-```
+`scan_references()` 函数扫描目录，解析文件名，返回 `{characters, map}` 结构。不需要额外的配置文件。
 
-转换为：
+GUI 支持上传参考音频，通过 base64 编码传输，服务器保存为正确的文件名格式。
 
-```text
-dajiahao, woshi beijixiong. jintian wolai duzhongwen.
-```
+## Character & Emotion
 
-这样避免 `da jia hao` 这种逐音节空格造成的明显停顿，也避免整句完全粘连造成可懂度下降。
+角色和情绪完全由参考音频文件名决定：
 
-## Voice Presets
+- `luna_angry.wav` → 角色 `luna`，情绪 `angry`
+- `luna_happy.wav` → 角色 `luna`，情绪 `happy`
+- `kai_neutral.wav` → 角色 `kai`，情绪 `neutral`
 
-Bark 的 `v2/en_speaker_*` 只是 speaker preset 编号，不是官方性别标签。早期版本曾把 `v2/en_speaker_8` 标成 `girl`，试听后发现偏低沉，因此改成 `warm-low`。
-
-当前策略：
-
-- 保留少量常用候选。
-- 使用中性、听感导向的名字。
-- 默认使用 `little-girl`，但文档中明确它只是当前最接近的候选。
-
-如果未来要稳定获得特定“小女孩音色”，更适合接入支持参考音频或音色克隆的模型，而不是继续依赖 Bark 的数字 preset。
+GUI 中角色下拉框在上，情绪下拉框在下。切换角色时，情绪下拉框自动更新为该角色可用的情绪列表。
 
 ## Audio Pipeline
 
-Bark 输出音频后，项目会按音色预设应用 `speed_pitch`。
+F5-TTS 输出音频后，项目会应用后处理：
 
-旧实现通过写入不同 WAV 采样率来变速变调，这对某些播放器不够稳。现在改为：
+1. 停顿压缩：检测并压缩过长静音。
+2. 语速/音高调整：使用 `scipy.signal.resample_poly` 对音频数组做真实重采样。
 
-1. 使用 `scipy.signal.resample_poly` 对音频数组做真实重采样。
-2. 保持 Bark 原始 `SAMPLE_RATE` 写出 WAV。
-
-这样能让语速和音高更亮，同时保持标准 WAV 元数据。
-
-## Emotion Presets
-
-单纯让 Bark 读拼音时，输出容易变成“念稿”。情绪预设用几种手段叠加改善这一点：
-
-- 非语音标签：例如 `[sighs]`、`[laughs softly]`、`[whispers]`。
-- 标点节奏：难过和委屈会增加省略号，开心会更偏感叹句。
-- 温度参数：开心、紧张提高温度，难过、轻声降低温度。
-- 语速倍率：开心、撒娇略快，难过、轻声略慢。
-
-这些方法本质上是 prompt bias，不是精确情绪控制。Bark 仍可能忽略或弱化某些情绪，尤其是在拼音文本较短时。
+这些后处理模块与 TTS backend 无关，更换 backend 时可以保留。
 
 ## GUI Behavior
 
 GUI 提供：
 
 - 文本输入
-- 音色选择
-- seed、温度、分段、语速/升调参数
-- 情绪选择
-- prompt 预览
+- 角色/情绪选择（基于文件名自动发现）
+- 参考音频预览和文本显示
+- 推理速度、语速/升调、停顿压缩参数
+- 两步生成流程：先生成可编辑的口音 Prompt，再用手动确认后的 Prompt 生成音频
+- 参考音频上传（折叠面板）
 - 生成进度估算条
 - 当前音频播放
 - 历史音频播放、重命名、删除
 - 夜间模式切换
-- 生成后停顿压缩参数
-
-进度条是前端估算进度，因为 Bark 生成过程没有稳定的逐阶段回调。后端返回成功后进度会直接到 100%。
 
 ## Known Limits
 
-- 首次运行需要下载 Bark 模型权重，完整模型体积较大。
-- Bark 输出仍有随机性，即使固定 seed 也不能保证完全像传统 TTS 一样稳定。
-- 数字 speaker preset 不能严格控制年龄、性别或角色。
+- 首次运行需要下载 F5-TTS 模型权重（约 1-2 GB）。
+- GPU 推理速度较快，CPU 推理很慢。
+- 参考音频质量直接影响输出质量，建议 5-15 秒清晰语音。
+- `ref_text` 必须准确匹配参考音频内容。
+- 参考音频可能包含授权或隐私素材，默认通过 `.gitignore` 排除，仓库只保留 `references/.gitkeep`。
 - GUI 服务绑定在 `127.0.0.1:7860`，默认只用于本机访问。
-
-## Roadmap: Emotional TTS Backend
-
-当前 Bark backend 依赖 prompt bias，难以稳定表达“难过、伤心、委屈”等细腻情绪。下一阶段更合理的路线是抽象一个 TTS backend 接口，然后接入支持参考音频或情绪控制的模型。
-
-推荐优先级：
-
-1. CosyVoice：中文和多语言能力较强，zero-shot cloning 路线清晰，适合尝试情绪化中文 TTS。
-2. F5-TTS：zero-shot voice cloning 质量较高，适合用授权参考音频固定“小女孩声线”。
-3. GPT-SoVITS：适合有稳定角色素材后做 few-shot 音色，长期可控性更好。
-
-设计上应保留现有后处理模块，包括停顿压缩、真实重采样、生成记录管理。即使更换 TTS backend，这些后处理仍然有价值。

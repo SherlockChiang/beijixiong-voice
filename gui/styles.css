@@ -241,6 +241,23 @@ input[type="range"] {
   margin-bottom: 18px;
 }
 
+.select-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.select-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.select-row .mini {
+  min-height: 42px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -356,6 +373,107 @@ pre {
 audio {
   width: calc(100% - 24px);
   margin: 0 12px 12px;
+}
+
+.ref-preview {
+  margin-bottom: 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+}
+
+.ref-preview audio {
+  width: 100%;
+  margin: 8px 0 0;
+}
+
+.ref-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.ref-meta span:first-child {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  word-break: break-all;
+}
+
+.ref-meta span:last-child {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.accent-toggle {
+  margin-top: 10px;
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.accent-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.accent-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+
+.accent-toggle .sub {
+  padding-left: 22px;
+  opacity: 0.5;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.accent-toggle:has(input:checked) .sub {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.upload-section {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--soft);
+}
+
+.upload-section summary {
+  cursor: pointer;
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.upload-section[open] summary {
+  margin-bottom: 12px;
+}
+
+.upload-section textarea {
+  min-height: 60px;
+  padding: 8px;
+  font-size: 13px;
+}
+
+.upload-section input[type="file"] {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.upload-section button {
+  margin-top: 8px;
+  width: 100%;
 }
 
 .audio-list {

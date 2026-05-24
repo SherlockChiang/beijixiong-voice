@@ -5,12 +5,15 @@ $venvPython = Join-Path $root ".venv\Scripts\python.exe"
 $serverScript = Join-Path $root "gui_server.py"
 $url = "http://127.0.0.1:7860"
 
-function Test-GuiServer {
-    try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri "$url/api/config" -TimeoutSec 1
-        return $response.StatusCode -eq 200
-    } catch {
-        return $false
+function Stop-ExistingServer {
+    $portLine = netstat -ano 2>$null | Select-String ":7860\s.*LISTENING"
+    if ($portLine) {
+        $oldPid = ($portLine -split "\s+")[-1]
+        if ($oldPid -match "^\d+$") {
+            Write-Host "Killing existing server (PID $oldPid)..."
+            Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+        }
     }
 }
 
@@ -21,26 +24,16 @@ if (Test-Path -LiteralPath $venvPython) {
     $python = "python"
 }
 
-if (-not (Test-GuiServer)) {
-    Start-Process `
-        -FilePath $python `
-        -ArgumentList "`"$serverScript`"" `
-        -WorkingDirectory $root `
-        -WindowStyle Hidden
+Stop-ExistingServer
 
-    $ready = $false
-    for ($i = 0; $i -lt 30; $i++) {
-        Start-Sleep -Milliseconds 500
-        if (Test-GuiServer) {
-            $ready = $true
-            break
-        }
-    }
+# Open browser in background after a short delay
+Start-Job -ScriptBlock {
+    Start-Sleep -Seconds 2
+    Start-Process $using:url
+} | Out-Null
 
-    if (-not $ready) {
-        throw "GUI server did not become ready at $url"
-    }
-}
+Write-Host "Starting server... ($url)"
+Write-Host "Press Ctrl+C to stop.`n"
 
-Start-Process $url
-Write-Host "Beijixiong Voice GUI opened: $url"
+# Run server in foreground so output is visible
+& $python $serverScript

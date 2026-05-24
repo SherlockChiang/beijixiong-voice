@@ -11,7 +11,7 @@
       <section class="workspace">
         <header class="topbar">
           <div class="brand">
-            <p class="eyebrow">Local Bark TTS</p>
+            <p class="eyebrow">Local F5-TTS</p>
             <h1>北极熊口音生成器</h1>
           </div>
           <div class="top-actions">
@@ -30,7 +30,7 @@
             </label>
 
             <div class="actions">
-              <button class="secondary" id="previewBtn" type="button">预览 Prompt</button>
+              <button class="secondary" id="promptBtn" type="button">生成口音 Prompt</button>
               <button class="primary" id="generateBtn" type="button">生成音频</button>
             </div>
 
@@ -46,10 +46,10 @@
 
             <section class="result">
               <div class="result-head">
-                <span>Prompt</span>
+                <span>口音 Prompt</span>
                 <button class="ghost" id="copyBtn" type="button">复制</button>
               </div>
-              <pre id="prompt">等待预览...</pre>
+              <textarea id="prompt" spellcheck="false" rows="7" placeholder="先点击生成口音 Prompt，也可以在这里手动修改后再生成音频。"></textarea>
               <audio id="audio" controls hidden></audio>
             </section>
 
@@ -64,34 +64,32 @@
 
           <aside class="controls">
             <label class="field compact">
-              <span>音色</span>
-              <select id="voice"></select>
+              <span>角色</span>
+              <div class="select-row">
+                <select id="character"></select>
+                <button class="mini danger" id="deleteCharacterBtn" type="button" title="删除当前角色的所有参考">删</button>
+              </div>
             </label>
 
             <label class="field compact">
               <span>情绪</span>
-              <select id="emotion"></select>
+              <div class="select-row">
+                <select id="emotion"></select>
+                <button class="mini danger" id="deleteEmotionBtn" type="button" title="删除当前情绪参考">删</button>
+              </div>
             </label>
 
-            <div class="grid">
-              <label class="field compact">
-                <span>Seed</span>
-                <input id="seed" type="number" />
-              </label>
-              <label class="field compact">
-                <span>分段</span>
-                <input id="maxChars" type="number" min="40" step="10" />
-              </label>
+            <div class="ref-preview" id="refPreview">
+              <div class="ref-meta">
+                <span id="refFileLabel">--</span>
+                <span id="refTextLabel">--</span>
+              </div>
+              <audio id="refAudio" controls></audio>
             </div>
 
             <label class="field compact">
-              <span>文本温度 <b id="textTempValue"></b></span>
-              <input id="textTemp" type="range" min="0.35" max="0.9" step="0.05" />
-            </label>
-
-            <label class="field compact">
-              <span>波形温度 <b id="waveformTempValue"></b></span>
-              <input id="waveformTemp" type="range" min="0.35" max="0.9" step="0.05" />
+              <span>推理速度 <b id="speedValue"></b></span>
+              <input id="speed" type="range" min="0.5" max="2.5" step="0.05" />
             </label>
 
             <label class="field compact">
@@ -101,7 +99,7 @@
 
             <label class="field compact">
               <span>最大停顿 <b id="maxPauseValue"></b></span>
-              <input id="maxPauseMs" type="range" min="80" max="500" step="10" />
+              <input id="maxPauseMs" type="range" min="0" max="500" step="10" />
             </label>
 
             <label class="field compact">
@@ -113,6 +111,32 @@
               <span>文件名</span>
               <input id="outputName" value="beijixiong" />
             </label>
+
+            <label class="field compact">
+              <span>口音强度 <b id="accentIntensityValue"></b></span>
+              <input id="accentIntensity" type="range" min="1" max="4" step="1" />
+            </label>
+
+            <details class="upload-section">
+              <summary>上传参考音频</summary>
+              <label class="field compact">
+                <span>角色名</span>
+                <input id="uploadCharacter" placeholder="luna" />
+              </label>
+              <label class="field compact">
+                <span>情绪名</span>
+                <input id="uploadEmotion" placeholder="angry" />
+              </label>
+              <label class="field compact">
+                <span>参考文本（可选）</span>
+                <textarea id="uploadRefText" rows="2" placeholder="参考音频中说的话，留空会自动转录（首次较慢）"></textarea>
+              </label>
+              <label class="field compact">
+                <span>音频文件</span>
+                <input id="uploadFile" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a" />
+              </label>
+              <button class="secondary" id="uploadBtn" type="button">上传</button>
+            </details>
           </aside>
         </div>
       </section>

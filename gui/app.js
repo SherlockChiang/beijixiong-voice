@@ -39,23 +39,23 @@ function setStatus(text, kind = "neutral") {
 
 function setBusy(value) {
   state.busy = value;
-  $("previewBtn").disabled = value;
+  $("promptBtn").disabled = value;
   $("generateBtn").disabled = value;
 }
 
 function payload() {
   return {
     text: $("text").value,
-    voice: $("voice").value,
+    character: $("character").value,
     emotion: $("emotion").value,
-    seed: Number($("seed").value),
-    textTemp: Number($("textTemp").value),
-    waveformTemp: Number($("waveformTemp").value),
+    speed: Number($("speed").value),
     speedPitch: Number($("speedPitch").value),
     maxPauseMs: Number($("maxPauseMs").value),
     silenceThresholdDb: Number($("silenceThresholdDb").value),
-    maxChars: Number($("maxChars").value),
     outputName: $("outputName").value,
+    accent: true,
+    accentIntensity: Number($("accentIntensity").value),
+    prompt: $("prompt").value,
   };
 }
 
@@ -76,32 +76,55 @@ async function loadConfig() {
   const response = await fetch("/api/config");
   state.config = await response.json();
 
-  const voice = $("voice");
-  Object.entries(state.config.voices).forEach(([name, item]) => {
-    const option = document.createElement("option");
-    option.value = name;
-    option.textContent = `${name} · ${item.speaker}`;
-    voice.appendChild(option);
-  });
-  voice.value = state.config.defaultVoice;
+  populateCharacterDropdown();
+  updateEmotionDropdown();
 
-  const emotion = $("emotion");
-  Object.entries(state.config.emotions).forEach(([name, item]) => {
-    const option = document.createElement("option");
-    option.value = name;
-    option.textContent = `${item.label} · ${name}`;
-    emotion.appendChild(option);
-  });
-  emotion.value = state.config.defaultEmotion;
-
-  $("seed").value = state.config.defaultSeed;
-  $("textTemp").value = state.config.defaultTextTemp;
-  $("waveformTemp").value = state.config.defaultWaveformTemp;
+  $("speed").value = state.config.defaultSpeed;
+  $("speedPitch").value = state.config.defaultSpeedPitch;
   $("maxPauseMs").value = state.config.defaultMaxPauseMs;
   $("silenceThresholdDb").value = state.config.defaultSilenceThresholdDb;
-  $("maxChars").value = state.config.defaultMaxChars;
-  syncPresetDefaults();
+  syncRanges();
+  updateReferencePreview();
   await loadAudios();
+}
+
+function populateCharacterDropdown() {
+  const sel = $("character");
+  const current = sel.value;
+  sel.innerHTML = "";
+  (state.config.characters || []).forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    sel.appendChild(option);
+  });
+  if (state.config.characters.includes(current)) {
+    sel.value = current;
+  } else if (state.config.characters.length) {
+    sel.value = state.config.characters[0];
+  }
+}
+
+function updateEmotionDropdown() {
+  const sel = $("emotion");
+  const current = sel.value;
+  const char = $("character").value;
+  const emotions = state.config.map?.[char] || {};
+  const emotionNames = Object.keys(emotions);
+
+  sel.innerHTML = "";
+  emotionNames.forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    sel.appendChild(option);
+  });
+
+  if (emotionNames.includes(current)) {
+    sel.value = current;
+  } else if (emotionNames.length) {
+    sel.value = emotionNames[0];
+  }
 }
 
 function setProgress(value, label) {
@@ -118,13 +141,13 @@ function startProgress() {
   clearInterval(state.progressTimer);
   state.progressTimer = setInterval(() => {
     const elapsed = (Date.now() - state.progressStartedAt) / 1000;
-    const estimate = 92 - 86 * Math.exp(-elapsed / 38);
+    const estimate = 92 - 86 * Math.exp(-elapsed / 30);
     const label =
-      elapsed < 8
+      elapsed < 6
         ? "加载模型"
-        : elapsed < 25
-          ? "生成语义 tokens"
-          : "合成波形";
+        : elapsed < 15
+          ? "提取参考特征"
+          : "生成音频";
     setProgress(estimate, label);
   }, 600);
 }
@@ -141,36 +164,32 @@ function failProgress() {
   setProgress(100, "生成失败");
 }
 
+const ACCENT_LABELS = { 1: "轻柔", 2: "均衡", 3: "强烈", 4: "混沌" };
+
 function syncRanges() {
-  $("textTempValue").textContent = $("textTemp").value;
-  $("waveformTempValue").textContent = $("waveformTemp").value;
+  $("speedValue").textContent = `${$("speed").value}x`;
   $("speedPitchValue").textContent = `${$("speedPitch").value}x`;
-  $("maxPauseValue").textContent = `${$("maxPauseMs").value} ms`;
+  $("maxPauseValue").textContent = $("maxPauseMs").value === "0" ? "关闭" : `${$("maxPauseMs").value} ms`;
   $("silenceThresholdValue").textContent = `${$("silenceThresholdDb").value} dB`;
+  $("accentIntensityValue").textContent = ACCENT_LABELS[$("accentIntensity").value] || "均衡";
 }
 
-function syncVoiceDefaults() {
-  syncPresetDefaults();
-}
-
-function syncPresetDefaults() {
-  const voice = $("voice").value;
+function updateReferencePreview() {
+  const char = $("character").value;
   const emotion = $("emotion").value;
-  const voicePreset = state.config?.voices?.[voice];
-  const emotionPreset = state.config?.emotions?.[emotion];
+  const entry = state.config?.map?.[char]?.[emotion];
 
-  if (emotionPreset) {
-    $("textTemp").value = emotionPreset.text_temp;
-    $("waveformTemp").value = emotionPreset.waveform_temp;
+  if (entry) {
+    const fileName = entry.file ? entry.file.split(/[/\\]/).pop() : "--";
+    $("refFileLabel").textContent = `${char} / ${emotion} — ${fileName}`;
+    $("refTextLabel").textContent = entry.ref_text || "(无参考文本，可选)";
+    $("refAudio").src = `/api/references/audio?file=${encodeURIComponent(fileName)}`;
+    $("refAudio").hidden = false;
+  } else {
+    $("refFileLabel").textContent = "--";
+    $("refTextLabel").textContent = "--";
+    $("refAudio").hidden = true;
   }
-
-  if (voicePreset || emotionPreset) {
-    const voiceSpeed = voicePreset?.speed_pitch || state.config.defaultSpeedPitch;
-    const emotionSpeed = emotionPreset?.speed_pitch || 1;
-    $("speedPitch").value = (voiceSpeed * emotionSpeed).toFixed(2);
-  }
-
-  syncRanges();
 }
 
 function formatSize(bytes) {
@@ -217,13 +236,13 @@ async function loadAudios() {
   renderAudios(data.audios || []);
 }
 
-async function preview() {
+async function buildPrompt() {
   setBusy(true);
-  setStatus("Previewing...");
+  setStatus("生成口音 Prompt...");
   try {
-    const data = await requestJson("/api/preview", payload());
-    $("prompt").textContent = data.prompt;
-    setStatus("Prompt ready", "ok");
+    const data = await requestJson("/api/prompt", payload());
+    $("prompt").value = data.prompt;
+    setStatus(`Prompt 已生成，实际语速 ${Number(data.effectiveSpeed || 1).toFixed(2)}x`, "ok");
   } catch (error) {
     setStatus(error.message, "error");
   } finally {
@@ -233,17 +252,20 @@ async function preview() {
 
 async function generate() {
   setBusy(true);
-  setStatus("Generating audio...");
+  setStatus("生成中...");
   startProgress();
   $("audio").hidden = true;
   try {
+    if (!$("prompt").value.trim()) {
+      throw new Error("请先生成或填写口音 Prompt。");
+    }
     const data = await requestJson("/api/generate", payload());
-    $("prompt").textContent = data.prompt;
+    $("prompt").value = data.prompt;
     $("audio").src = `${data.audio.url}&t=${Date.now()}`;
     $("audio").hidden = false;
     await loadAudios();
     finishProgress();
-    setStatus(`Done: ${data.audio.file}`, "ok");
+    setStatus(`完成: ${data.audio.file}`, "ok");
   } catch (error) {
     failProgress();
     setStatus(error.message, "error");
@@ -253,8 +275,130 @@ async function generate() {
 }
 
 async function copyPrompt() {
-  await navigator.clipboard.writeText($("prompt").textContent);
-  setStatus("Prompt copied", "ok");
+  await navigator.clipboard.writeText($("prompt").value);
+  setStatus("已复制", "ok");
+}
+
+async function uploadReference() {
+  const character = $("uploadCharacter").value.trim();
+  const emotion = $("uploadEmotion").value.trim();
+  const refText = $("uploadRefText").value.trim();
+  const fileInput = $("uploadFile");
+
+  if (!character) {
+    setStatus("请填写角色名", "error");
+    return;
+  }
+  if (!emotion) {
+    setStatus("请填写情绪名", "error");
+    return;
+  }
+  if (!fileInput.files.length) {
+    setStatus("请选择音频文件", "error");
+    return;
+  }
+
+  setBusy(true);
+  setStatus("上传中...");
+  try {
+    const file = fileInput.files[0];
+    const ext = file.name.split(".").pop() || "wav";
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const audioData = btoa(binary);
+
+    const result = await requestJson("/api/references/upload", {
+      character,
+      emotion,
+      ref_text: refText,
+      ext,
+      audio_data: audioData,
+    });
+
+    state.config.characters = result.characters;
+    state.config.map = result.map;
+    populateCharacterDropdown();
+    $("character").value = character;
+    updateEmotionDropdown();
+    $("emotion").value = emotion;
+    updateReferencePreview();
+    setStatus("上传成功", "ok");
+
+    $("uploadCharacter").value = "";
+    $("uploadEmotion").value = "";
+    $("uploadRefText").value = "";
+    fileInput.value = "";
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function deleteCurrentReference() {
+  const char = $("character").value;
+  const emotion = $("emotion").value;
+  if (!char || !emotion) {
+    setStatus("没有可删除的参考", "error");
+    return;
+  }
+  if (!window.confirm(`删除 ${char}_${emotion} 的参考音频？`)) {
+    return;
+  }
+  try {
+    const result = await requestJson("/api/references/delete", { file: `${char}_${emotion}` });
+    state.config.characters = result.characters;
+    state.config.map = result.map;
+    populateCharacterDropdown();
+    updateEmotionDropdown();
+    updateReferencePreview();
+    setStatus("已删除", "ok");
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+async function deleteCurrentCharacter() {
+  const char = $("character").value;
+  if (!char) {
+    setStatus("没有可删除的角色", "error");
+    return;
+  }
+  const emotions = state.config.map?.[char] || {};
+  const count = Object.keys(emotions).length;
+  if (!window.confirm(`删除角色「${char}」的全部 ${count} 个参考音频？`)) {
+    return;
+  }
+  try {
+    let result;
+    for (const emotion of Object.keys(emotions)) {
+      result = await requestJson("/api/references/delete", { file: `${char}_${emotion}` });
+    }
+    if (result) {
+      state.config.characters = result.characters;
+      state.config.map = result.map;
+      populateCharacterDropdown();
+      updateEmotionDropdown();
+      updateReferencePreview();
+    }
+    setStatus(`已删除角色「${char}」`, "ok");
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+function parseFilename(filename) {
+  const stem = filename.replace(/\.[^.]+$/, "");
+  const idx = stem.indexOf("_");
+  if (idx <= 0) return null;
+  return {
+    character: stem.substring(0, idx),
+    emotion: stem.substring(idx + 1),
+  };
 }
 
 async function handleAudioAction(event) {
@@ -273,7 +417,7 @@ async function handleAudioAction(event) {
     try {
       await requestJson("/api/rename-audio", { file, name });
       await loadAudios();
-      setStatus("Renamed", "ok");
+      setStatus("已重命名", "ok");
     } catch (error) {
       setStatus(error.message, "error");
     }
@@ -286,26 +430,41 @@ async function handleAudioAction(event) {
     try {
       await requestJson("/api/delete-audio", { file });
       await loadAudios();
-      setStatus("Deleted", "ok");
+      setStatus("已删除", "ok");
     } catch (error) {
       setStatus(error.message, "error");
     }
   }
 }
 
-$("previewBtn").addEventListener("click", preview);
+$("promptBtn").addEventListener("click", buildPrompt);
 $("generateBtn").addEventListener("click", generate);
 $("copyBtn").addEventListener("click", copyPrompt);
 $("refreshBtn").addEventListener("click", loadAudios);
 $("audioList").addEventListener("click", handleAudioAction);
 $("themeToggle").addEventListener("click", toggleTheme);
-$("voice").addEventListener("change", syncVoiceDefaults);
-$("emotion").addEventListener("change", syncPresetDefaults);
-$("textTemp").addEventListener("input", syncRanges);
-$("waveformTemp").addEventListener("input", syncRanges);
+$("uploadBtn").addEventListener("click", uploadReference);
+$("deleteCharacterBtn").addEventListener("click", deleteCurrentCharacter);
+$("deleteEmotionBtn").addEventListener("click", deleteCurrentReference);
+$("uploadFile").addEventListener("change", () => {
+  const fileInput = $("uploadFile");
+  if (!fileInput.files.length) return;
+  const parsed = parseFilename(fileInput.files[0].name);
+  if (parsed) {
+    if (!$("uploadCharacter").value) $("uploadCharacter").value = parsed.character;
+    if (!$("uploadEmotion").value) $("uploadEmotion").value = parsed.emotion;
+  }
+});
+$("character").addEventListener("change", () => {
+  updateEmotionDropdown();
+  updateReferencePreview();
+});
+$("emotion").addEventListener("change", updateReferencePreview);
+$("speed").addEventListener("input", syncRanges);
 $("speedPitch").addEventListener("input", syncRanges);
 $("maxPauseMs").addEventListener("input", syncRanges);
 $("silenceThresholdDb").addEventListener("input", syncRanges);
+$("accentIntensity").addEventListener("input", syncRanges);
 
 applyTheme(preferredTheme());
 

@@ -2,201 +2,55 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
-import random
 import re
 import sys
 from pathlib import Path
 
-
-DEFAULT_VOICE = "little-girl"
-DEFAULT_OUTPUT = Path("output/beijixiong_voice.wav")
-DEFAULT_PREFIX = ""
-DEFAULT_SEED = 20260523
-DEFAULT_TEXT_TEMP = 0.62
-DEFAULT_WAVEFORM_TEMP = 0.64
-DEFAULT_MAX_CHARS = 170
-DEFAULT_SPEED_PITCH = 1.16
-DEFAULT_COMPACT_PINYIN = True
-DEFAULT_EMOTION = "neutral"
-DEFAULT_MAX_PAUSE_MS = 180
+DEFAULT_SPEED_PITCH = 1.0
+DEFAULT_MAX_PAUSE_MS = 0
 DEFAULT_SILENCE_THRESHOLD_DB = -42.0
 DEFAULT_MIN_SILENCE_MS = 240
+DEFAULT_SPEED = 1.0
+DEFAULT_DEVICE = "cuda"
+DEFAULT_OUTPUT = Path("output/beijixiong_voice.wav")
 
-CJK_RE = re.compile(r"[\u3400-\u9fff]")
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_CKPT_FILE = PROJECT_ROOT / "model_1250000.safetensors"
+DEFAULT_VOCODER_PATH = PROJECT_ROOT / "vocos-mel-24khz"
+DEFAULT_WHISPER_PATH = PROJECT_ROOT / "whisper-large-v3-turbo"
+
+AUDIO_EXTS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+
+EMOTION_SPEED_FACTORS = {
+    "sad": 0.70,
+    "hurt": 0.82,
+    "cry": 0.70,
+    "soft": 0.92,
+}
+
+# ── Pinyin accent pipeline ──────────────────────────────────────────────────
+
+CJK_RE = re.compile(r"[㐀-鿿]")
 TOKEN_RE = re.compile(r"\[[^\]]+\]|[A-Za-z0-9_:-]+|[,.!?;:]+|\S")
-TEXT_RUN_RE = re.compile(r"[\u3400-\u9fff]+|[^\u3400-\u9fff]+")
+TEXT_RUN_RE = re.compile(r"[㐀-鿿]+|[^㐀-鿿]+")
 
 PUNCT_TRANSLATION = str.maketrans(
     {
-        "\u3002": ".",
-        "\uff0c": ",",
-        "\uff01": "!",
-        "\uff1f": "?",
-        "\u3001": ",",
-        "\uff1b": ";",
-        "\uff1a": ":",
-        "\u2014": ",",
-        "\u2026": "...",
+        "。": ".",
+        "，": ",",
+        "！": "!",
+        "？": "?",
+        "、": ",",
+        "；": ";",
+        "：": ":",
+        "—": ",",
+        "…": "...",
     }
 )
 
-INTENSITY_LEVELS = {
-    "soft": 1,
-    "balanced": 2,
-    "strong": 3,
-    "chaos": 4,
-}
-
-VOICE_PRESETS = {
-    "little-girl": {
-        "speaker": "v2/en_speaker_9",
-        "description": "best current bright young candidate",
-        "speed_pitch": 1.2,
-    },
-    "soft-young": {
-        "speaker": "v2/en_speaker_4",
-        "description": "soft young-ish candidate",
-        "speed_pitch": 1.1,
-    },
-    "clear-young": {
-        "speaker": "v2/en_speaker_3",
-        "description": "clear higher English candidate",
-        "speed_pitch": 1.12,
-    },
-    "warm-low": {
-        "speaker": "v2/en_speaker_8",
-        "description": "warm low voice; not a girl voice",
-        "speed_pitch": 1.08,
-    },
-    "low-young": {
-        "speaker": "v2/en_speaker_2",
-        "description": "lower young-ish candidate",
-        "speed_pitch": 1.06,
-    },
-    "narrator": {
-        "speaker": "v2/en_speaker_6",
-        "description": "stable low narrator voice from the original test",
-        "speed_pitch": 1.0,
-    },
-}
-
-EMOTION_PRESETS = {
-    "neutral": {
-        "label": "平静",
-        "description": "steady and plain delivery",
-        "prefix": "",
-        "text_temp": 0.62,
-        "waveform_temp": 0.64,
-        "speed_pitch": 1.0,
-        "style": "plain",
-    },
-    "happy": {
-        "label": "开心",
-        "description": "brighter, faster, more animated",
-        "prefix": "[laughs softly]",
-        "text_temp": 0.7,
-        "waveform_temp": 0.72,
-        "speed_pitch": 1.06,
-        "style": "bright",
-    },
-    "sad": {
-        "label": "难过",
-        "description": "slower, softer, with sighing pauses",
-        "prefix": "[sighs]",
-        "text_temp": 0.56,
-        "waveform_temp": 0.58,
-        "speed_pitch": 0.92,
-        "style": "sad",
-    },
-    "hurt": {
-        "label": "委屈",
-        "description": "small, hesitant, emotionally restrained",
-        "prefix": "[sighs softly]",
-        "text_temp": 0.6,
-        "waveform_temp": 0.62,
-        "speed_pitch": 0.96,
-        "style": "hesitant",
-    },
-    "nervous": {
-        "label": "紧张",
-        "description": "uneven and slightly breathy",
-        "prefix": "[gasps]",
-        "text_temp": 0.74,
-        "waveform_temp": 0.76,
-        "speed_pitch": 1.04,
-        "style": "hesitant",
-    },
-    "cute": {
-        "label": "撒娇",
-        "description": "lively and playful",
-        "prefix": "[giggles]",
-        "text_temp": 0.68,
-        "waveform_temp": 0.7,
-        "speed_pitch": 1.08,
-        "style": "bright",
-    },
-    "whisper": {
-        "label": "轻声",
-        "description": "soft whisper-like delivery",
-        "prefix": "[whispers]",
-        "text_temp": 0.54,
-        "waveform_temp": 0.56,
-        "speed_pitch": 0.94,
-        "style": "soft",
-    },
-}
-
-EXACT_SPELLINGS = {
-    "a": "ah",
-    "ai": "eye",
-    "bei": "bay",
-    "ci": "tsuh",
-    "chi": "chee",
-    "de": "duh",
-    "er": "are",
-    "ge": "guh",
-    "gong": "gawng",
-    "hao": "haow",
-    "he": "huh",
-    "ji": "gee",
-    "jia": "jee-ah",
-    "le": "luh",
-    "ma": "mah",
-    "mei": "may",
-    "men": "mun",
-    "neng": "nung",
-    "ni": "nee",
-    "qing": "ching",
-    "ren": "run",
-    "ri": "ree",
-    "shi": "shee",
-    "si": "suh",
-    "wo": "woh",
-    "xiong": "shee-ong",
-    "yi": "yee",
-    "you": "yo",
-    "yu": "you",
-    "zhe": "juh",
-    "zhi": "zhee",
-    "zi": "dzuh",
-}
-
-
-def contains_cjk(text: str) -> bool:
-    return bool(CJK_RE.search(text))
-
 
 def _lazy_pinyin(text: str) -> list[str]:
-    try:
-        from pypinyin import Style, lazy_pinyin
-    except ImportError as exc:
-        raise RuntimeError(
-            "Input contains Chinese characters, so pypinyin is required. "
-            "Install dependencies with: pip install -r requirements.txt. "
-            f"Current Python: {sys.executable}"
-        ) from exc
-
+    from pypinyin import Style, lazy_pinyin
     return lazy_pinyin(
         text,
         style=Style.NORMAL,
@@ -205,26 +59,10 @@ def _lazy_pinyin(text: str) -> list[str]:
     )
 
 
-def romanize_chinese(text: str, compact_pinyin: bool = DEFAULT_COMPACT_PINYIN) -> str:
-    normalized = text.translate(PUNCT_TRANSLATION)
-    if not compact_pinyin:
-        parts = _lazy_pinyin(normalized)
-        return " ".join(part for part in parts if part.strip())
-
-    output: list[str] = []
-    for run in TEXT_RUN_RE.findall(normalized):
-        if contains_cjk(run):
-            output.append(group_pinyin(_lazy_pinyin(run)))
-        else:
-            output.append(run)
-    return "".join(output)
-
-
-def group_pinyin(parts: list[str]) -> str:
-    parts = [part for part in parts if part.strip()]
+def _group_pinyin(parts: list[str]) -> str:
+    parts = [p for p in parts if p.strip()]
     if len(parts) <= 3:
         return "".join(parts)
-
     groups: list[str] = []
     index = 0
     while index < len(parts):
@@ -235,207 +73,188 @@ def group_pinyin(parts: list[str]) -> str:
     return " ".join(groups)
 
 
-def normalize_source(
-    text: str,
-    raw_pinyin: bool,
-    compact_pinyin: bool = DEFAULT_COMPACT_PINYIN,
-) -> str:
+def _romanize_chinese(text: str) -> str:
     normalized = text.translate(PUNCT_TRANSLATION)
-    if raw_pinyin or not contains_cjk(normalized):
-        return normalized
-    return romanize_chinese(normalized, compact_pinyin=compact_pinyin)
+    output: list[str] = []
+    for run in TEXT_RUN_RE.findall(normalized):
+        if CJK_RE.search(run):
+            output.append(_group_pinyin(_lazy_pinyin(run)))
+        else:
+            output.append(run)
+    return "".join(output)
 
 
-def soften_final(word: str) -> str:
-    replacements = (
-        ("iang", "ee-ahng"),
-        ("iong", "ee-ong"),
-        ("uang", "oo-ahng"),
-        ("ang", "ahng"),
-        ("eng", "ung"),
-        ("ong", "awng"),
-        ("ian", "ee-en"),
-        ("iao", "ee-aow"),
-        ("uan", "oo-en"),
-        ("ai", "eye"),
-        ("ei", "ay"),
-        ("ao", "aow"),
-        ("ou", "oh"),
-        ("uo", "woh"),
-        ("ui", "way"),
-        ("iu", "yo"),
-    )
-    for old, new in replacements:
+def _soften_final(word: str) -> str:
+    for old, new in (
+        ("iang", "ee-ahng"), ("iong", "ee-ong"), ("uang", "oo-ahng"),
+        ("ang", "ahng"), ("eng", "ung"), ("ong", "awng"),
+        ("ian", "ee-en"), ("iao", "ee-aow"), ("uan", "oo-en"),
+        ("ai", "eye"), ("ei", "ay"), ("ao", "aow"), ("ou", "oh"),
+        ("uo", "woh"), ("ui", "way"), ("iu", "yo"),
+    ):
         if old in word:
             word = word.replace(old, new)
     return word
 
 
-def reshape_initial(word: str) -> str:
-    replacements = (
-        ("x", "sh"),
-        ("q", "ch"),
-        ("zh", "j"),
-        ("c", "ts"),
-        ("r", "rr"),
-    )
-    for old, new in replacements:
+def _reshape_initial(word: str) -> str:
+    for old, new in (("x", "sh"), ("q", "ch"), ("zh", "j"), ("c", "ts"), ("r", "rr")):
         if word.startswith(old):
-            return new + word[len(old) :]
+            return new + word[len(old):]
     return word
 
 
-def stretch_vowel(word: str) -> str:
+def _stretch_vowel(word: str) -> str:
     for vowel in ("a", "o", "e"):
-        index = word.rfind(vowel)
-        if index != -1:
-            return word[:index] + vowel * 3 + word[index + 1 :]
+        idx = word.rfind(vowel)
+        if idx != -1:
+            return word[:idx] + vowel * 3 + word[idx + 1:]
     return word
 
 
-def accent_word(token: str, level: int, word_index: int) -> str:
-    original = token
+def _accent_word(token: str, level: int, word_index: int) -> str:
     word = token.lower()
-    word = word.replace("u:", "v").replace("ü", "v").replace("v", "yu")
+    word = word.replace("u:", "yu").replace("ü", "yu")
     word = re.sub(r"[1-5]$", "", word)
-
+    word = _reshape_initial(word)
+    word = _soften_final(word)
     if level >= 3 and word_index % 5 == 0:
         word = word.capitalize()
-
     if level >= 4 and word_index % 7 == 3:
-        word = stretch_vowel(word)
-
-    if original.isupper():
-        return word.upper()
+        word = _stretch_vowel(word)
     return word
 
 
-def join_tokens(tokens: list[str]) -> str:
+def _join_tokens(tokens: list[str]) -> str:
     output: list[str] = []
-    no_space_before = {".", ",", "!", "?", ";", ":", "..."}
-
+    no_space = {".", ",", "!", "?", ";", ":", "..."}
     for token in tokens:
         if not output:
             output.append(token)
-            continue
-
-        if token in no_space_before:
+        elif token in no_space:
             output[-1] = output[-1].rstrip() + token
         elif output[-1].endswith("["):
             output.append(token)
         else:
             output.append(" " + token)
-
     return "".join(output).strip()
 
 
-def apply_emotion(prompt: str, emotion: str = DEFAULT_EMOTION) -> str:
-    preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS[DEFAULT_EMOTION])
-    styled = prompt
+def accent_chinese(text: str, intensity: int = 2) -> str:
+    """Convert Chinese text to English-accented pinyin for F5-TTS.
 
-    if preset["style"] == "sad":
-        styled = styled.replace(", ", "... ")
-        styled = re.sub(r"\.\s*", "... ", styled).strip()
-    elif preset["style"] == "hesitant":
-        styled = styled.replace(", ", "... ")
-        styled = re.sub(r"\.\s*$", "...", styled)
-    elif preset["style"] == "bright":
-        styled = re.sub(r"\.\s*$", "!", styled)
-    elif preset["style"] == "soft":
-        styled = styled.replace("! ", ". ")
-
-    emotion_prefix = str(preset["prefix"]).strip()
-    if emotion_prefix:
-        styled = f"{emotion_prefix} {styled}"
-    return styled.strip()
-
-
-def make_polar_bear_prompt(
-    text: str,
-    *,
-    raw_pinyin: bool = False,
-    intensity: str = "balanced",
-    prefix: str = DEFAULT_PREFIX,
-    compact_pinyin: bool = DEFAULT_COMPACT_PINYIN,
-    emotion: str = DEFAULT_EMOTION,
-) -> str:
-    level = INTENSITY_LEVELS[intensity]
-    source = normalize_source(text, raw_pinyin, compact_pinyin=compact_pinyin)
+    intensity: 1=soft, 2=balanced, 3=strong, 4=chaos
+    """
+    source = _romanize_chinese(text)
     tokens = TOKEN_RE.findall(source)
-
     accented: list[str] = []
     word_index = 0
     for token in tokens:
         if token.startswith("[") and token.endswith("]"):
             accented.append(token)
         elif re.fullmatch(r"[A-Za-z0-9_:-]+", token):
-            accented.append(accent_word(token, level, word_index))
+            accented.append(_accent_word(token, intensity, word_index))
             word_index += 1
         else:
             accented.append(token)
-
-    prompt = join_tokens(accented)
-    clean_prefix = prefix.strip()
-    if clean_prefix:
-        prompt = f"{clean_prefix} {prompt}"
-    prompt = apply_emotion(prompt, emotion)
-    return prompt
+    return _join_tokens(accented)
 
 
-def list_voices() -> str:
-    rows = ["Available voices:"]
-    for name, preset in VOICE_PRESETS.items():
-        rows.append(f"  {name:<12} {preset['speaker']:<16} {preset['description']}")
-    return "\n".join(rows)
+def emotion_speed_factor(emotion: str) -> float:
+    key = emotion.lower().strip()
+    return EMOTION_SPEED_FACTORS.get(key, 1.0)
 
 
-def list_emotions() -> str:
-    rows = ["Available emotions:"]
-    for name, preset in EMOTION_PRESETS.items():
-        rows.append(f"  {name:<8} {preset['label']:<6} {preset['description']}")
-    return "\n".join(rows)
+def shape_emotion_text(text: str, emotion: str) -> str:
+    key = emotion.lower().strip()
+    if key not in {"sad", "hurt", "cry"}:
+        return text
+
+    shaped = text.strip()
+    shaped = re.sub(r"[。.!！]\s*", "... ", shaped)
+    shaped = re.sub(r"[，,、]\s*", ", ", shaped)
+    shaped = re.sub(r"\s+", " ", shaped).strip()
+    return shaped
 
 
-def split_prompt(prompt: str, max_chars: int) -> list[str]:
-    if max_chars <= 0 or len(prompt) <= max_chars:
-        return [prompt]
-
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-
-    for token in re.split(r"(\s+)", prompt):
-        token_len = len(token)
-        if current and current_len + token_len > max_chars:
-            chunks.append("".join(current).strip())
-            current = [token.lstrip()]
-            current_len = len(current[0])
-        else:
-            current.append(token)
-            current_len += token_len
-
-    if current:
-        chunks.append("".join(current).strip())
-    return [chunk for chunk in chunks if chunk]
+def prepare_generation_text(
+    text: str,
+    *,
+    emotion: str = "",
+    accent: bool = False,
+    accent_intensity: int = 2,
+) -> str:
+    final_text = shape_emotion_text(text, emotion)
+    if accent:
+        final_text = accent_chinese(final_text, intensity=accent_intensity)
+    return final_text
 
 
-def seed_everything(seed: int) -> None:
-    random.seed(seed)
-    try:
-        import numpy as np
+def scan_references(refs_dir: Path) -> dict:
+    """Scan references/ for {character}_{emotion} audio files.
 
-        np.random.seed(seed)
-    except ImportError:
-        pass
+    Returns:
+        {
+            "characters": ["luna", "kai", ...],
+            "map": {
+                "luna": {
+                    "angry": {
+                        "file": "references/luna_angry.mp3",
+                        "ref_text": "...",
+                    },
+                    ...
+                },
+            },
+        }
+    """
+    refs_dir = Path(refs_dir).resolve()
+    if not refs_dir.is_dir():
+        return {"characters": [], "map": {}}
 
-    try:
-        import torch
+    char_map: dict[str, dict] = {}
+    for f in sorted(refs_dir.iterdir()):
+        if f.is_dir() or f.suffix.lower() not in AUDIO_EXTS:
+            continue
+        stem = f.stem
+        if "_" not in stem:
+            continue
+        char, emotion = stem.split("_", 1)
+        if not char or not emotion:
+            continue
 
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-    except ImportError:
-        pass
+        ref_text = ""
+        txt_path = f.with_suffix(".txt")
+        if txt_path.is_file():
+            ref_text = txt_path.read_text(encoding="utf-8").strip()
+
+        char_map.setdefault(char, {})[emotion] = {
+            "file": str(f),
+            "ref_text": ref_text,
+        }
+
+    characters = sorted(char_map.keys())
+    return {"characters": characters, "map": char_map}
+
+
+def resolve_reference(
+    refs_dir: Path, character: str, emotion: str
+) -> tuple[str, str]:
+    data = scan_references(refs_dir)
+    char_data = data["map"].get(character)
+    if not char_data:
+        available = ", ".join(data["characters"]) or "(none)"
+        raise RuntimeError(
+            f"Character {character!r} not found in {refs_dir}. "
+            f"Available: {available}"
+        )
+    entry = char_data.get(emotion)
+    if not entry:
+        available = ", ".join(sorted(char_data.keys())) or "(none)"
+        raise RuntimeError(
+            f"Emotion {emotion!r} not found for character {character!r}. "
+            f"Available: {available}"
+        )
+    return entry["file"], entry["ref_text"]
 
 
 def apply_speed_pitch(audio_array, factor: float):
@@ -460,6 +279,80 @@ def apply_speed_pitch(audio_array, factor: float):
     up //= divisor
     down //= divisor
     return resample_poly(audio_array, up, down).astype(audio_array.dtype, copy=False)
+
+
+def patch_f5_torchaudio_load() -> None:
+    """Avoid TorchCodec-backed torchaudio.load on Windows.
+
+    torchaudio 2.11 routes load() through TorchCodec. On Windows this can fail
+    when FFmpeg shared DLLs are missing. F5-TTS only needs a waveform tensor and
+    sample rate here, so soundfile is enough for WAV/FLAC-style references.
+    """
+    try:
+        import numpy as np
+        import soundfile as sf
+        import torch
+        import f5_tts.infer.utils_infer as utils_infer
+    except ImportError as exc:
+        raise RuntimeError(
+            "soundfile/torch are required for the safe F5-TTS audio loader. "
+            "Install dependencies with: pip install -r requirements.txt"
+        ) from exc
+
+    def safe_load(uri, *args, **kwargs):
+        data, sample_rate = sf.read(str(uri), dtype="float32", always_2d=True)
+        # torchaudio.load returns channels-first tensors.
+        tensor = torch.from_numpy(np.ascontiguousarray(data.T))
+        return tensor, sample_rate
+
+    import torchaudio
+    torchaudio.load = safe_load
+    utils_infer.torchaudio.load = safe_load
+
+
+def patch_whisper_local() -> None:
+    """Point F5-TTS Whisper transcription at a local model directory."""
+    if not DEFAULT_WHISPER_PATH.is_dir():
+        return
+
+    import sys
+    import types
+
+    # Block torchcodec import — transformers tries it for audio preprocessing
+    # but it fails on Windows without FFmpeg DLLs.
+    if "torchcodec" not in sys.modules:
+        fake = types.ModuleType("torchcodec")
+        fake.__path__ = []  # type: ignore[attr-defined]
+        sys.modules["torchcodec"] = fake
+        for sub in ("decoders", "encoders", "samplers", "transforms", "_core", "_core.ops", "_core._metadata", "_internally_replaced_utils"):
+            child = types.ModuleType(f"torchcodec.{sub}")
+            child.__path__ = []  # type: ignore[attr-defined]
+            sys.modules[f"torchcodec.{sub}"] = child
+            parts = sub.split(".")
+            parent = fake
+            for p in parts[:-1]:
+                parent = getattr(parent, p)
+            setattr(parent, parts[-1], child)
+        # transformers checks isinstance(inputs, torchcodec.decoders.AudioDecoder)
+        setattr(sys.modules["torchcodec.decoders"], "AudioDecoder", type("AudioDecoder", (), {}))
+
+    try:
+        from transformers import pipeline
+        import f5_tts.infer.utils_infer as utils_infer
+    except ImportError:
+        return
+
+    whisper_path = str(DEFAULT_WHISPER_PATH)
+
+    def _init_asr(device=None, dtype=None):
+        utils_infer.asr_pipe = pipeline(
+            "automatic-speech-recognition",
+            model=whisper_path,
+            torch_dtype=dtype,
+            device=device or utils_infer.device,
+        )
+
+    utils_infer.initialize_asr_pipeline = _init_asr
 
 
 def compress_long_silences(
@@ -526,193 +419,207 @@ def compress_long_silences(
     return np.concatenate(chunks).astype(audio_array.dtype, copy=False)
 
 
-def generate_audio_file(
-    prompt: str,
+def generate_audio(
+    text: str,
     *,
+    ref_file: str,
+    ref_text: str,
     output: Path,
-    speaker: str,
-    preload: bool,
-    small_models: bool,
-    seed: int,
-    text_temp: float,
-    waveform_temp: float,
-    max_chars: int,
-    speed_pitch: float,
+    speed: float = DEFAULT_SPEED,
+    speed_pitch: float = DEFAULT_SPEED_PITCH,
     max_pause_ms: int = DEFAULT_MAX_PAUSE_MS,
     silence_threshold_db: float = DEFAULT_SILENCE_THRESHOLD_DB,
     min_silence_ms: int = DEFAULT_MIN_SILENCE_MS,
-) -> None:
-    if small_models:
-        os.environ["SUNO_USE_SMALL_MODELS"] = "True"
+    device: str = DEFAULT_DEVICE,
+    ckpt_file: str = "",
+    vocoder_path: str = "",
+    accent: bool = False,
+    accent_intensity: int = 2,
+    emotion: str = "",
+    prepared_text: bool = False,
+) -> str:
+    try:
+        from f5_tts.api import F5TTS
+    except ImportError as exc:
+        raise RuntimeError(
+            "f5-tts is required. Install with: pip install -r requirements.txt"
+        ) from exc
+
+    patch_f5_torchaudio_load()
+    patch_whisper_local()
 
     try:
         import numpy as np
-        from bark import SAMPLE_RATE, generate_audio, preload_models
         from scipy.io.wavfile import write as write_wav
     except ImportError as exc:
         raise RuntimeError(
-            "Bark/scipy dependencies are missing. Install them with: "
-            "pip install -r requirements.txt"
+            "scipy/numpy are required. Install with: pip install -r requirements.txt"
         ) from exc
 
-    if preload:
-        preload_models()
+    # Auto-detect local model files
+    if not ckpt_file and DEFAULT_CKPT_FILE.is_file():
+        ckpt_file = str(DEFAULT_CKPT_FILE)
+    if not vocoder_path and DEFAULT_VOCODER_PATH.is_dir():
+        vocoder_path = str(DEFAULT_VOCODER_PATH)
 
-    seed_everything(seed)
-    audio_parts = []
-    chunks = split_prompt(prompt, max_chars=max_chars)
-    for index, chunk in enumerate(chunks, start=1):
-        if len(chunks) > 1:
-            print(f"Generating chunk {index}/{len(chunks)}...")
-        audio_parts.append(
-            generate_audio(
-                chunk,
-                history_prompt=speaker,
-                text_temp=text_temp,
-                waveform_temp=waveform_temp,
+    ckpt_label = Path(ckpt_file).name if ckpt_file else "huggingface"
+    vocoder_label = Path(vocoder_path).name if vocoder_path else "huggingface"
+    print(f"Loading F5TTS on device: {device}")
+    print(f"  ckpt: {ckpt_label}")
+    print(f"  vocoder: {vocoder_label}")
+
+    ref_text = ref_text.strip()
+    try:
+        import soundfile as sf
+
+        ref_info = sf.info(str(ref_file))
+        ref_duration = ref_info.frames / ref_info.samplerate if ref_info.samplerate else 0
+        if ref_duration > 12 and ref_text:
+            print(
+                "Warning: reference audio is longer than 12s. "
+                "F5-TTS will clip it internally, so ref_text must match the clipped first part only. "
+                "A full-audio transcript can make speech too fast or drop the beginning."
             )
-        )
+    except Exception:
+        pass
 
-    audio_array = audio_parts[0] if len(audio_parts) == 1 else np.concatenate(audio_parts)
+    tts = F5TTS(
+        model="F5TTS_v1_Base",
+        device=device,
+        ckpt_file=ckpt_file,
+        vocoder_local_path=vocoder_path or None,
+    )
+    if not prepared_text:
+        text = prepare_generation_text(
+            text,
+            emotion=emotion,
+            accent=accent,
+            accent_intensity=accent_intensity,
+        )
+    else:
+        text = text.strip()
+    print(f"Final prompt: {text}")
+
+    print(f"Model loaded. Starting inference...")
+    wav, sr, _ = tts.infer(
+        ref_file=ref_file,
+        ref_text=ref_text,
+        gen_text=text,
+        speed=speed * emotion_speed_factor(emotion),
+    )
+
+    audio_array = np.array(wav)
     audio_array = compress_long_silences(
         audio_array,
-        SAMPLE_RATE,
+        sr,
         max_pause_ms=max_pause_ms,
         threshold_db=silence_threshold_db,
         min_silence_ms=min_silence_ms,
     )
     audio_array = apply_speed_pitch(audio_array, speed_pitch)
+
     output.parent.mkdir(parents=True, exist_ok=True)
-    write_wav(str(output), SAMPLE_RATE, audio_array)
+    write_wav(str(output), sr, audio_array)
+    return text
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate a local Bark voice with a Sora2-like pinyin accent."
+        description="Generate voice-cloned Chinese speech using F5-TTS."
     )
     parser.add_argument(
         "text",
         nargs="?",
         default="大家好，我是北极熊。今天我来读中文。",
-        help="Chinese text or pre-written romanized pinyin.",
+        help="Chinese text to synthesize.",
     )
     parser.add_argument(
-        "-o",
-        "--output",
+        "-o", "--output",
         type=Path,
         default=DEFAULT_OUTPUT,
         help=f"WAV output path. Default: {DEFAULT_OUTPUT}",
     )
     parser.add_argument(
-        "--voice",
-        choices=tuple(VOICE_PRESETS) + ("all",),
-        default=DEFAULT_VOICE,
-        help=f"Voice preset, or 'all' to render every preset. Default: {DEFAULT_VOICE}",
-    )
-    parser.add_argument(
-        "--speaker",
+        "--refs-dir",
+        type=Path,
         default=None,
-        help="Override Bark history prompt / speaker id, for example v2/en_speaker_6.",
+        help="Directory containing {character}_{emotion} reference audio files.",
     )
     parser.add_argument(
-        "--list-voices",
-        action="store_true",
-        help="List built-in voice presets and exit.",
-    )
-    parser.add_argument(
-        "--list-emotions",
-        action="store_true",
-        help="List built-in emotion presets and exit.",
+        "--character",
+        default=None,
+        help="Character name (filename prefix before _).",
     )
     parser.add_argument(
         "--emotion",
-        choices=tuple(EMOTION_PRESETS),
-        default=DEFAULT_EMOTION,
-        help=f"Emotion preset. Default: {DEFAULT_EMOTION}",
+        default=None,
+        help="Emotion name (filename part after _).",
     )
     parser.add_argument(
-        "--intensity",
-        choices=tuple(INTENSITY_LEVELS),
-        default="balanced",
-        help="How aggressively to rewrite pinyin for the accent.",
-    )
-    parser.add_argument(
-        "--prefix",
-        default=DEFAULT_PREFIX,
-        help="Optional Bark non-speech prefix such as '[clears throat]'.",
-    )
-    parser.add_argument(
-        "--raw-pinyin",
-        action="store_true",
-        help="Skip Chinese-to-pinyin conversion and treat input as romanized text.",
-    )
-    parser.add_argument(
-        "--spaced-pinyin",
-        action="store_true",
-        help="Keep spaces between every pinyin syllable instead of compacting Chinese runs.",
-    )
-    parser.add_argument(
-        "--preview",
-        action="store_true",
-        help="Print the final Bark prompt without generating audio.",
-    )
-    parser.add_argument(
-        "--no-preload",
-        action="store_true",
-        help="Call generate_audio without preload_models().",
-    )
-    parser.add_argument(
-        "--small-models",
-        action="store_true",
-        help="Set SUNO_USE_SMALL_MODELS=True before loading Bark.",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=DEFAULT_SEED,
-        help=f"Random seed for more repeatable local output. Default: {DEFAULT_SEED}",
-    )
-    parser.add_argument(
-        "--text-temp",
+        "--speed",
         type=float,
-        default=DEFAULT_TEXT_TEMP,
-        help=f"Bark text temperature. Lower is steadier. Default: {DEFAULT_TEXT_TEMP}",
-    )
-    parser.add_argument(
-        "--waveform-temp",
-        type=float,
-        default=DEFAULT_WAVEFORM_TEMP,
-        help=f"Bark waveform temperature. Lower is steadier. Default: {DEFAULT_WAVEFORM_TEMP}",
-    )
-    parser.add_argument(
-        "--max-chars",
-        type=int,
-        default=DEFAULT_MAX_CHARS,
-        help=f"Split long prompts for stability. Default: {DEFAULT_MAX_CHARS}",
+        default=DEFAULT_SPEED,
+        help=f"F5-TTS inference speed. Default: {DEFAULT_SPEED}",
     )
     parser.add_argument(
         "--speed-pitch",
         type=float,
-        default=None,
-        help=(
-            "Speed/pitch multiplier applied by resampling audio data. "
-            f"Default comes from the voice preset, fallback {DEFAULT_SPEED_PITCH}."
-        ),
+        default=DEFAULT_SPEED_PITCH,
+        help=f"Post-processing speed/pitch multiplier. Default: {DEFAULT_SPEED_PITCH}",
     )
     parser.add_argument(
         "--max-pause-ms",
         type=int,
         default=DEFAULT_MAX_PAUSE_MS,
-        help=(
-            "Compress detected long silences to this duration in milliseconds. "
-            f"Use 0 to disable. Default: {DEFAULT_MAX_PAUSE_MS}"
-        ),
+        help=f"Compress detected long silences to this duration in ms. Default: {DEFAULT_MAX_PAUSE_MS}",
     )
     parser.add_argument(
         "--silence-threshold-db",
         type=float,
         default=DEFAULT_SILENCE_THRESHOLD_DB,
         help=f"Relative silence threshold in dB. Default: {DEFAULT_SILENCE_THRESHOLD_DB}",
+    )
+    parser.add_argument(
+        "--device",
+        default=DEFAULT_DEVICE,
+        help=f"Device for inference (cuda/cpu). Default: {DEFAULT_DEVICE}",
+    )
+    parser.add_argument(
+        "--ckpt-file",
+        default="",
+        help=f"Path to F5TTS model checkpoint. Default: auto-detect {DEFAULT_CKPT_FILE.name}",
+    )
+    parser.add_argument(
+        "--vocoder-path",
+        default="",
+        help=f"Path to vocoder directory. Default: auto-detect {DEFAULT_VOCODER_PATH.name}",
+    )
+    parser.add_argument(
+        "--ref-file",
+        default=None,
+        help="Override reference audio file path directly.",
+    )
+    parser.add_argument(
+        "--ref-text",
+        default=None,
+        help="Override reference transcript directly.",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List available characters and emotions, then exit.",
+    )
+    parser.add_argument(
+        "--accent",
+        action="store_true",
+        help="Convert Chinese text to English-accented pinyin before synthesis.",
+    )
+    parser.add_argument(
+        "--accent-intensity",
+        type=int,
+        choices=[1, 2, 3, 4],
+        default=2,
+        help="Accent intensity: 1=soft, 2=balanced, 3=strong, 4=chaos. Default: 2",
     )
     return parser
 
@@ -722,69 +629,58 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        if args.list_voices:
-            print(list_voices())
-            return 0
-        if args.list_emotions:
-            print(list_emotions())
+        refs_dir = args.refs_dir or Path(__file__).resolve().parent / "references"
+
+        if args.list:
+            data = scan_references(refs_dir)
+            if not data["characters"]:
+                print(f"No reference audio found in {refs_dir}")
+                print("Expected filename format: {character}_{emotion}.wav")
+                return 0
+            for char in data["characters"]:
+                emotions = sorted(data["map"][char].keys())
+                print(f"  {char}: {', '.join(emotions)}")
             return 0
 
-        prompt = make_polar_bear_prompt(
+        if args.ref_file and args.ref_text:
+            ref_file = args.ref_file
+            ref_text = args.ref_text
+        else:
+            if not args.character or not args.emotion:
+                print("Error: --character and --emotion are required (or use --ref-file + --ref-text).", file=sys.stderr)
+                return 1
+            ref_file, ref_text = resolve_reference(refs_dir, args.character, args.emotion)
+            if args.ref_file:
+                ref_file = args.ref_file
+            if args.ref_text:
+                ref_text = args.ref_text
+
+        print(f"Character: {args.character} | Emotion: {args.emotion}")
+        print(f"Reference: {ref_file}")
+        print(f"Ref text: {ref_text}")
+        print(f"Generating: {args.text}")
+
+        generate_audio(
             args.text,
-            raw_pinyin=args.raw_pinyin,
-            intensity=args.intensity,
-            prefix=args.prefix,
-            compact_pinyin=not args.spaced_pinyin,
-            emotion=args.emotion,
+            ref_file=ref_file,
+            ref_text=ref_text,
+            output=args.output,
+            speed=args.speed,
+            speed_pitch=args.speed_pitch,
+            max_pause_ms=args.max_pause_ms,
+            silence_threshold_db=args.silence_threshold_db,
+            device=args.device,
+            ckpt_file=args.ckpt_file,
+            vocoder_path=args.vocoder_path,
+            accent=args.accent,
+            accent_intensity=args.accent_intensity,
+            emotion=args.emotion or "",
         )
-
-        print("Bark prompt:")
-        print(prompt)
-
-        selected_voices = list(VOICE_PRESETS) if args.voice == "all" else [args.voice]
-        if args.preview:
-            for voice in selected_voices:
-                speaker = args.speaker or VOICE_PRESETS[voice]["speaker"]
-                print(f"Voice: {voice} ({speaker})")
-            return 0
-
-        rendered_outputs: list[Path] = []
-        for voice in selected_voices:
-            speaker = args.speaker or VOICE_PRESETS[voice]["speaker"]
-            speed_pitch = (
-                args.speed_pitch
-                if args.speed_pitch is not None
-                else float(VOICE_PRESETS[voice].get("speed_pitch", DEFAULT_SPEED_PITCH))
-            )
-            speed_pitch *= float(EMOTION_PRESETS[args.emotion].get("speed_pitch", 1.0))
-            output = args.output
-            if args.voice == "all":
-                output = args.output.with_name(
-                    f"{args.output.stem}_{voice}{args.output.suffix}"
-                )
-
-            print(f"Generating with voice {voice} ({speaker})...")
-            generate_audio_file(
-                prompt,
-                output=output,
-                speaker=speaker,
-                preload=not args.no_preload,
-                small_models=args.small_models,
-                seed=args.seed,
-                text_temp=args.text_temp,
-                waveform_temp=args.waveform_temp,
-                max_chars=args.max_chars,
-                speed_pitch=speed_pitch,
-                max_pause_ms=args.max_pause_ms,
-                silence_threshold_db=args.silence_threshold_db,
-            )
-            rendered_outputs.append(output)
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    for output in rendered_outputs:
-        print(f"Done: {output}")
+    print(f"Done: {args.output}")
     return 0
 
 

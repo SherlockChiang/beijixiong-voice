@@ -5,3 +5,9 @@ __pycache__/
 *.pyc
 output/
 *.log
+references/*
+!references/.gitkeep
+whisper-large-v3-turbo/
+vocos-mel-24khz/
+model_1250000.safetensors
+.backup/
