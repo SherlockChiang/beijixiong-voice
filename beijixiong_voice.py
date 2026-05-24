@@ -19,6 +19,9 @@ DEFAULT_MAX_CHARS = 170
 DEFAULT_SPEED_PITCH = 1.16
 DEFAULT_COMPACT_PINYIN = True
 DEFAULT_EMOTION = "neutral"
+DEFAULT_MAX_PAUSE_MS = 180
+DEFAULT_SILENCE_THRESHOLD_DB = -42.0
+DEFAULT_MIN_SILENCE_MS = 240
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
 TOKEN_RE = re.compile(r"\[[^\]]+\]|[A-Za-z0-9_:-]+|[,.!?;:]+|\S")
@@ -459,6 +462,70 @@ def apply_speed_pitch(audio_array, factor: float):
     return resample_poly(audio_array, up, down).astype(audio_array.dtype, copy=False)
 
 
+def compress_long_silences(
+    audio_array,
+    sample_rate: int,
+    *,
+    max_pause_ms: int = DEFAULT_MAX_PAUSE_MS,
+    threshold_db: float = DEFAULT_SILENCE_THRESHOLD_DB,
+    min_silence_ms: int = DEFAULT_MIN_SILENCE_MS,
+):
+    if max_pause_ms <= 0:
+        return audio_array
+
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("numpy is required for silence compression.") from exc
+
+    if len(audio_array) == 0:
+        return audio_array
+
+    mono = audio_array
+    if getattr(audio_array, "ndim", 1) > 1:
+        mono = np.max(np.abs(audio_array), axis=1)
+    else:
+        mono = np.abs(audio_array)
+
+    peak = float(np.max(mono))
+    if peak <= 0:
+        return audio_array
+
+    threshold = peak * (10 ** (threshold_db / 20.0))
+    silent = mono <= threshold
+    min_samples = max(1, int(sample_rate * min_silence_ms / 1000))
+    keep_samples = max(1, int(sample_rate * max_pause_ms / 1000))
+
+    chunks = []
+    start = 0
+    index = 0
+    length = len(audio_array)
+
+    while index < length:
+        if not silent[index]:
+            index += 1
+            continue
+
+        silence_start = index
+        while index < length and silent[index]:
+            index += 1
+        silence_end = index
+        silence_len = silence_end - silence_start
+
+        if silence_len >= min_samples and silence_len > keep_samples:
+            keep_left = keep_samples // 2
+            keep_right = keep_samples - keep_left
+            cut_start = silence_start + keep_left
+            cut_end = silence_end - keep_right
+            chunks.append(audio_array[start:cut_start])
+            start = cut_end
+
+    chunks.append(audio_array[start:])
+    if len(chunks) == 1:
+        return audio_array
+    return np.concatenate(chunks).astype(audio_array.dtype, copy=False)
+
+
 def generate_audio_file(
     prompt: str,
     *,
@@ -471,6 +538,9 @@ def generate_audio_file(
     waveform_temp: float,
     max_chars: int,
     speed_pitch: float,
+    max_pause_ms: int = DEFAULT_MAX_PAUSE_MS,
+    silence_threshold_db: float = DEFAULT_SILENCE_THRESHOLD_DB,
+    min_silence_ms: int = DEFAULT_MIN_SILENCE_MS,
 ) -> None:
     if small_models:
         os.environ["SUNO_USE_SMALL_MODELS"] = "True"
@@ -504,6 +574,13 @@ def generate_audio_file(
         )
 
     audio_array = audio_parts[0] if len(audio_parts) == 1 else np.concatenate(audio_parts)
+    audio_array = compress_long_silences(
+        audio_array,
+        SAMPLE_RATE,
+        max_pause_ms=max_pause_ms,
+        threshold_db=silence_threshold_db,
+        min_silence_ms=min_silence_ms,
+    )
     audio_array = apply_speed_pitch(audio_array, speed_pitch)
     output.parent.mkdir(parents=True, exist_ok=True)
     write_wav(str(output), SAMPLE_RATE, audio_array)
@@ -622,6 +699,21 @@ def build_parser() -> argparse.ArgumentParser:
             f"Default comes from the voice preset, fallback {DEFAULT_SPEED_PITCH}."
         ),
     )
+    parser.add_argument(
+        "--max-pause-ms",
+        type=int,
+        default=DEFAULT_MAX_PAUSE_MS,
+        help=(
+            "Compress detected long silences to this duration in milliseconds. "
+            f"Use 0 to disable. Default: {DEFAULT_MAX_PAUSE_MS}"
+        ),
+    )
+    parser.add_argument(
+        "--silence-threshold-db",
+        type=float,
+        default=DEFAULT_SILENCE_THRESHOLD_DB,
+        help=f"Relative silence threshold in dB. Default: {DEFAULT_SILENCE_THRESHOLD_DB}",
+    )
     return parser
 
 
@@ -683,6 +775,8 @@ def main(argv: list[str] | None = None) -> int:
                 waveform_temp=args.waveform_temp,
                 max_chars=args.max_chars,
                 speed_pitch=speed_pitch,
+                max_pause_ms=args.max_pause_ms,
+                silence_threshold_db=args.silence_threshold_db,
             )
             rendered_outputs.append(output)
     except RuntimeError as exc:

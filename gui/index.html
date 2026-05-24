@@ -100,6 +100,16 @@
             </label>
 
             <label class="field compact">
+              <span>最大停顿 <b id="maxPauseValue"></b></span>
+              <input id="maxPauseMs" type="range" min="80" max="500" step="10" />
+            </label>
+
+            <label class="field compact">
+              <span>静音阈值 <b id="silenceThresholdValue"></b></span>
+              <input id="silenceThresholdDb" type="range" min="-60" max="-25" step="1" />
+            </label>
+
+            <label class="field compact">
               <span>文件名</span>
               <input id="outputName" value="beijixiong" />
             </label>

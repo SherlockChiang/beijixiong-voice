@@ -13,6 +13,8 @@ from beijixiong_voice import (
     DEFAULT_MAX_CHARS,
     DEFAULT_EMOTION,
     DEFAULT_SEED,
+    DEFAULT_MAX_PAUSE_MS,
+    DEFAULT_SILENCE_THRESHOLD_DB,
     DEFAULT_SPEED_PITCH,
     DEFAULT_TEXT_TEMP,
     DEFAULT_VOICE,
@@ -101,6 +103,8 @@ class GuiHandler(SimpleHTTPRequestHandler):
                     "defaultWaveformTemp": DEFAULT_WAVEFORM_TEMP,
                     "defaultMaxChars": DEFAULT_MAX_CHARS,
                     "defaultSpeedPitch": DEFAULT_SPEED_PITCH,
+                    "defaultMaxPauseMs": DEFAULT_MAX_PAUSE_MS,
+                    "defaultSilenceThresholdDb": DEFAULT_SILENCE_THRESHOLD_DB,
                     "defaultEmotion": DEFAULT_EMOTION,
                     "voices": VOICE_PRESETS,
                     "emotions": EMOTION_PRESETS,
@@ -194,6 +198,10 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 ),
                 max_chars=int(payload.get("maxChars") or DEFAULT_MAX_CHARS),
                 speed_pitch=speed_pitch,
+                max_pause_ms=int(payload.get("maxPauseMs") or DEFAULT_MAX_PAUSE_MS),
+                silence_threshold_db=float(
+                    payload.get("silenceThresholdDb") or DEFAULT_SILENCE_THRESHOLD_DB
+                ),
             )
             self.send_json(
                 {

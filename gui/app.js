@@ -52,6 +52,8 @@ function payload() {
     textTemp: Number($("textTemp").value),
     waveformTemp: Number($("waveformTemp").value),
     speedPitch: Number($("speedPitch").value),
+    maxPauseMs: Number($("maxPauseMs").value),
+    silenceThresholdDb: Number($("silenceThresholdDb").value),
     maxChars: Number($("maxChars").value),
     outputName: $("outputName").value,
   };
@@ -95,6 +97,8 @@ async function loadConfig() {
   $("seed").value = state.config.defaultSeed;
   $("textTemp").value = state.config.defaultTextTemp;
   $("waveformTemp").value = state.config.defaultWaveformTemp;
+  $("maxPauseMs").value = state.config.defaultMaxPauseMs;
+  $("silenceThresholdDb").value = state.config.defaultSilenceThresholdDb;
   $("maxChars").value = state.config.defaultMaxChars;
   syncPresetDefaults();
   await loadAudios();
@@ -141,6 +145,8 @@ function syncRanges() {
   $("textTempValue").textContent = $("textTemp").value;
   $("waveformTempValue").textContent = $("waveformTemp").value;
   $("speedPitchValue").textContent = `${$("speedPitch").value}x`;
+  $("maxPauseValue").textContent = `${$("maxPauseMs").value} ms`;
+  $("silenceThresholdValue").textContent = `${$("silenceThresholdDb").value} dB`;
 }
 
 function syncVoiceDefaults() {
@@ -298,6 +304,8 @@ $("emotion").addEventListener("change", syncPresetDefaults);
 $("textTemp").addEventListener("input", syncRanges);
 $("waveformTemp").addEventListener("input", syncRanges);
 $("speedPitch").addEventListener("input", syncRanges);
+$("maxPauseMs").addEventListener("input", syncRanges);
+$("silenceThresholdDb").addEventListener("input", syncRanges);
 
 applyTheme(preferredTheme());
 
