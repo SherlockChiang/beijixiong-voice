@@ -11,11 +11,13 @@ from urllib.parse import parse_qs, urlparse
 
 from beijixiong_voice import (
     DEFAULT_MAX_CHARS,
+    DEFAULT_EMOTION,
     DEFAULT_SEED,
     DEFAULT_SPEED_PITCH,
     DEFAULT_TEXT_TEMP,
     DEFAULT_VOICE,
     DEFAULT_WAVEFORM_TEMP,
+    EMOTION_PRESETS,
     VOICE_PRESETS,
     generate_audio_file,
     make_polar_bear_prompt,
@@ -99,7 +101,9 @@ class GuiHandler(SimpleHTTPRequestHandler):
                     "defaultWaveformTemp": DEFAULT_WAVEFORM_TEMP,
                     "defaultMaxChars": DEFAULT_MAX_CHARS,
                     "defaultSpeedPitch": DEFAULT_SPEED_PITCH,
+                    "defaultEmotion": DEFAULT_EMOTION,
                     "voices": VOICE_PRESETS,
+                    "emotions": EMOTION_PRESETS,
                 }
             )
             return
@@ -156,6 +160,7 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 intensity="balanced",
                 prefix="",
                 compact_pinyin=True,
+                emotion=str(payload.get("emotion") or DEFAULT_EMOTION),
             )
             if parsed.path == "/api/preview":
                 self.send_json({"prompt": prompt})
@@ -168,11 +173,14 @@ class GuiHandler(SimpleHTTPRequestHandler):
             output_name = safe_name(str(payload.get("outputName") or "beijixiong"))
             output = OUTPUT_DIR / f"{output_name}_{voice}_{int(time.time())}.wav"
             speaker = str(payload.get("speaker") or VOICE_PRESETS[voice]["speaker"])
-            speed_pitch = float(
-                payload.get("speedPitch")
-                or VOICE_PRESETS[voice].get("speed_pitch")
-                or DEFAULT_SPEED_PITCH
-            )
+            emotion = str(payload.get("emotion") or DEFAULT_EMOTION)
+            if payload.get("speedPitch") is not None:
+                speed_pitch = float(payload.get("speedPitch"))
+            else:
+                speed_pitch = float(
+                    VOICE_PRESETS[voice].get("speed_pitch") or DEFAULT_SPEED_PITCH
+                )
+                speed_pitch *= float(EMOTION_PRESETS[emotion].get("speed_pitch", 1.0))
             generate_audio_file(
                 prompt,
                 output=output,

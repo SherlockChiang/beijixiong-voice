@@ -47,6 +47,7 @@ function payload() {
   return {
     text: $("text").value,
     voice: $("voice").value,
+    emotion: $("emotion").value,
     seed: Number($("seed").value),
     textTemp: Number($("textTemp").value),
     waveformTemp: Number($("waveformTemp").value),
@@ -82,13 +83,20 @@ async function loadConfig() {
   });
   voice.value = state.config.defaultVoice;
 
+  const emotion = $("emotion");
+  Object.entries(state.config.emotions).forEach(([name, item]) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = `${item.label} · ${name}`;
+    emotion.appendChild(option);
+  });
+  emotion.value = state.config.defaultEmotion;
+
   $("seed").value = state.config.defaultSeed;
   $("textTemp").value = state.config.defaultTextTemp;
   $("waveformTemp").value = state.config.defaultWaveformTemp;
-  $("speedPitch").value =
-    state.config.voices[voice.value]?.speed_pitch || state.config.defaultSpeedPitch;
   $("maxChars").value = state.config.defaultMaxChars;
-  syncRanges();
+  syncPresetDefaults();
   await loadAudios();
 }
 
@@ -136,12 +144,27 @@ function syncRanges() {
 }
 
 function syncVoiceDefaults() {
+  syncPresetDefaults();
+}
+
+function syncPresetDefaults() {
   const voice = $("voice").value;
-  const preset = state.config?.voices?.[voice];
-  if (preset?.speed_pitch) {
-    $("speedPitch").value = preset.speed_pitch;
-    syncRanges();
+  const emotion = $("emotion").value;
+  const voicePreset = state.config?.voices?.[voice];
+  const emotionPreset = state.config?.emotions?.[emotion];
+
+  if (emotionPreset) {
+    $("textTemp").value = emotionPreset.text_temp;
+    $("waveformTemp").value = emotionPreset.waveform_temp;
   }
+
+  if (voicePreset || emotionPreset) {
+    const voiceSpeed = voicePreset?.speed_pitch || state.config.defaultSpeedPitch;
+    const emotionSpeed = emotionPreset?.speed_pitch || 1;
+    $("speedPitch").value = (voiceSpeed * emotionSpeed).toFixed(2);
+  }
+
+  syncRanges();
 }
 
 function formatSize(bytes) {
@@ -271,6 +294,7 @@ $("refreshBtn").addEventListener("click", loadAudios);
 $("audioList").addEventListener("click", handleAudioAction);
 $("themeToggle").addEventListener("click", toggleTheme);
 $("voice").addEventListener("change", syncVoiceDefaults);
+$("emotion").addEventListener("change", syncPresetDefaults);
 $("textTemp").addEventListener("input", syncRanges);
 $("waveformTemp").addEventListener("input", syncRanges);
 $("speedPitch").addEventListener("input", syncRanges);

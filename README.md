@@ -9,6 +9,7 @@ Beijixiong Voice 是一个本地 Bark TTS 小工具，用英文 speaker preset �
 - 音频管理：生成后的 WAV 保存在 `output/`，可在页面中播放、重命名、删除。
 - 短语连读：中文会转成紧凑拼音短语，例如 `dajiahao, woshi beijixiong.`，减少逐字停顿。
 - 多音色预设：使用 Bark 的 `v2/en_speaker_*` preset，并按实际听感命名。
+- 情绪预设：通过非语音标签、标点节奏、温度和语速组合，让输出更接近开心、难过、委屈、紧张等状态。
 - 稳定输出：固定 seed、长文本分段、真实重采样调整语速/音高。
 - 夜间模式：跟随系统主题，也支持手动切换并记住选择。
 
@@ -78,6 +79,19 @@ Voice: little-girl (v2/en_speaker_9)
 .\.venv\Scripts\python.exe beijixiong_voice.py --list-voices
 ```
 
+查看情绪：
+
+```powershell
+.\.venv\Scripts\python.exe beijixiong_voice.py --list-emotions
+```
+
+生成带情绪的语音：
+
+```powershell
+.\.venv\Scripts\python.exe beijixiong_voice.py "我真的很难过。" --emotion sad -o output/sad.wav
+.\.venv\Scripts\python.exe beijixiong_voice.py "太好了，我们成功了。" --emotion happy -o output/happy.wav
+```
+
 一次生成全部预设，方便试听：
 
 ```powershell
@@ -100,6 +114,7 @@ Bark 官方的 `v2/en_speaker_*` 是数字 speaker preset，不保证与性别�
 ## Notes
 
 - GUI 中生成的文件默认进入 `output/`，该目录不会提交到 Git。
+- 情绪预设是对 Bark 的 prompt bias，不是严格可控的情感 TTS；建议用 GUI 多试听几次，挑最自然的一版。
 - `--speed-pitch` 使用 `scipy.signal.resample_poly` 对音频数据做真实重采样，并保持标准 WAV 采样率。
 - Bark 不是严格可控的传统 TTS，同一个 preset 的结果仍会有随机性和风格漂移。
 - 如果中文预览提示缺少 `pypinyin`，通常是 GUI 服务没有用 `.venv` 的 Python 启动。使用 `.\run_gui.ps1` 可以避免这个问题。

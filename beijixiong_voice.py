@@ -18,6 +18,7 @@ DEFAULT_WAVEFORM_TEMP = 0.64
 DEFAULT_MAX_CHARS = 170
 DEFAULT_SPEED_PITCH = 1.16
 DEFAULT_COMPACT_PINYIN = True
+DEFAULT_EMOTION = "neutral"
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
 TOKEN_RE = re.compile(r"\[[^\]]+\]|[A-Za-z0-9_:-]+|[,.!?;:]+|\S")
@@ -74,6 +75,72 @@ VOICE_PRESETS = {
         "speaker": "v2/en_speaker_6",
         "description": "stable low narrator voice from the original test",
         "speed_pitch": 1.0,
+    },
+}
+
+EMOTION_PRESETS = {
+    "neutral": {
+        "label": "平静",
+        "description": "steady and plain delivery",
+        "prefix": "",
+        "text_temp": 0.62,
+        "waveform_temp": 0.64,
+        "speed_pitch": 1.0,
+        "style": "plain",
+    },
+    "happy": {
+        "label": "开心",
+        "description": "brighter, faster, more animated",
+        "prefix": "[laughs softly]",
+        "text_temp": 0.7,
+        "waveform_temp": 0.72,
+        "speed_pitch": 1.06,
+        "style": "bright",
+    },
+    "sad": {
+        "label": "难过",
+        "description": "slower, softer, with sighing pauses",
+        "prefix": "[sighs]",
+        "text_temp": 0.56,
+        "waveform_temp": 0.58,
+        "speed_pitch": 0.92,
+        "style": "sad",
+    },
+    "hurt": {
+        "label": "委屈",
+        "description": "small, hesitant, emotionally restrained",
+        "prefix": "[sighs softly]",
+        "text_temp": 0.6,
+        "waveform_temp": 0.62,
+        "speed_pitch": 0.96,
+        "style": "hesitant",
+    },
+    "nervous": {
+        "label": "紧张",
+        "description": "uneven and slightly breathy",
+        "prefix": "[gasps]",
+        "text_temp": 0.74,
+        "waveform_temp": 0.76,
+        "speed_pitch": 1.04,
+        "style": "hesitant",
+    },
+    "cute": {
+        "label": "撒娇",
+        "description": "lively and playful",
+        "prefix": "[giggles]",
+        "text_temp": 0.68,
+        "waveform_temp": 0.7,
+        "speed_pitch": 1.08,
+        "style": "bright",
+    },
+    "whisper": {
+        "label": "轻声",
+        "description": "soft whisper-like delivery",
+        "prefix": "[whispers]",
+        "text_temp": 0.54,
+        "waveform_temp": 0.56,
+        "speed_pitch": 0.94,
+        "style": "soft",
     },
 }
 
@@ -259,6 +326,27 @@ def join_tokens(tokens: list[str]) -> str:
     return "".join(output).strip()
 
 
+def apply_emotion(prompt: str, emotion: str = DEFAULT_EMOTION) -> str:
+    preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS[DEFAULT_EMOTION])
+    styled = prompt
+
+    if preset["style"] == "sad":
+        styled = styled.replace(", ", "... ")
+        styled = re.sub(r"\.\s*", "... ", styled).strip()
+    elif preset["style"] == "hesitant":
+        styled = styled.replace(", ", "... ")
+        styled = re.sub(r"\.\s*$", "...", styled)
+    elif preset["style"] == "bright":
+        styled = re.sub(r"\.\s*$", "!", styled)
+    elif preset["style"] == "soft":
+        styled = styled.replace("! ", ". ")
+
+    emotion_prefix = str(preset["prefix"]).strip()
+    if emotion_prefix:
+        styled = f"{emotion_prefix} {styled}"
+    return styled.strip()
+
+
 def make_polar_bear_prompt(
     text: str,
     *,
@@ -266,6 +354,7 @@ def make_polar_bear_prompt(
     intensity: str = "balanced",
     prefix: str = DEFAULT_PREFIX,
     compact_pinyin: bool = DEFAULT_COMPACT_PINYIN,
+    emotion: str = DEFAULT_EMOTION,
 ) -> str:
     level = INTENSITY_LEVELS[intensity]
     source = normalize_source(text, raw_pinyin, compact_pinyin=compact_pinyin)
@@ -286,6 +375,7 @@ def make_polar_bear_prompt(
     clean_prefix = prefix.strip()
     if clean_prefix:
         prompt = f"{clean_prefix} {prompt}"
+    prompt = apply_emotion(prompt, emotion)
     return prompt
 
 
@@ -293,6 +383,13 @@ def list_voices() -> str:
     rows = ["Available voices:"]
     for name, preset in VOICE_PRESETS.items():
         rows.append(f"  {name:<12} {preset['speaker']:<16} {preset['description']}")
+    return "\n".join(rows)
+
+
+def list_emotions() -> str:
+    rows = ["Available emotions:"]
+    for name, preset in EMOTION_PRESETS.items():
+        rows.append(f"  {name:<8} {preset['label']:<6} {preset['description']}")
     return "\n".join(rows)
 
 
@@ -446,6 +543,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="List built-in voice presets and exit.",
     )
     parser.add_argument(
+        "--list-emotions",
+        action="store_true",
+        help="List built-in emotion presets and exit.",
+    )
+    parser.add_argument(
+        "--emotion",
+        choices=tuple(EMOTION_PRESETS),
+        default=DEFAULT_EMOTION,
+        help=f"Emotion preset. Default: {DEFAULT_EMOTION}",
+    )
+    parser.add_argument(
         "--intensity",
         choices=tuple(INTENSITY_LEVELS),
         default="balanced",
@@ -525,6 +633,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.list_voices:
             print(list_voices())
             return 0
+        if args.list_emotions:
+            print(list_emotions())
+            return 0
 
         prompt = make_polar_bear_prompt(
             args.text,
@@ -532,6 +643,7 @@ def main(argv: list[str] | None = None) -> int:
             intensity=args.intensity,
             prefix=args.prefix,
             compact_pinyin=not args.spaced_pinyin,
+            emotion=args.emotion,
         )
 
         print("Bark prompt:")
@@ -552,6 +664,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.speed_pitch is not None
                 else float(VOICE_PRESETS[voice].get("speed_pitch", DEFAULT_SPEED_PITCH))
             )
+            speed_pitch *= float(EMOTION_PRESETS[args.emotion].get("speed_pitch", 1.0))
             output = args.output
             if args.voice == "all":
                 output = args.output.with_name(
