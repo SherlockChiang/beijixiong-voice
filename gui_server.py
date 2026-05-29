@@ -7,6 +7,7 @@ import time
 import wave
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock
 from urllib.parse import parse_qs, urlparse
 
 from beijixiong_voice import (
@@ -27,6 +28,9 @@ ROOT = Path(__file__).resolve().parent
 GUI_DIR = ROOT / "gui"
 OUTPUT_DIR = ROOT / "output"
 REFS_DIR = ROOT / "references"
+MAX_JSON_BYTES = 90 * 1024 * 1024
+MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+GENERATION_LOCK = Lock()
 
 
 def json_bytes(payload: object) -> bytes:
@@ -38,11 +42,19 @@ def safe_name(value: str) -> str:
     return value.strip("._") or "beijixiong"
 
 
+def is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
 def audio_path(file_name: str) -> Path:
     name = safe_name(file_name)
     path = (OUTPUT_DIR / name).resolve()
     output_root = OUTPUT_DIR.resolve()
-    if not str(path).startswith(str(output_root)) or path.suffix.lower() != ".wav":
+    if not is_relative_to(path, output_root) or path.suffix.lower() != ".wav":
         raise RuntimeError("Invalid audio file.")
     return path
 
@@ -52,13 +64,13 @@ def ref_audio_path(file_name: str) -> Path:
     ref_root = REFS_DIR.resolve()
     # Try exact path first
     path = (REFS_DIR / name).resolve()
-    if str(path).startswith(str(ref_root)) and path.is_file() and path.suffix.lower() in AUDIO_EXTS:
+    if is_relative_to(path, ref_root) and path.is_file() and path.suffix.lower() in AUDIO_EXTS:
         return path
     # Try without extension (for delete by character_emotion)
     stem = Path(name).stem
-    for ext in AUDIO_EXTS:
+    for ext in sorted(AUDIO_EXTS):
         candidate = (REFS_DIR / f"{stem}{ext}").resolve()
-        if candidate.is_file() and str(candidate).startswith(str(ref_root)):
+        if candidate.is_file() and is_relative_to(candidate, ref_root):
             return candidate
     raise RuntimeError("Reference audio not found.")
 
@@ -203,7 +215,11 @@ class GuiHandler(SimpleHTTPRequestHandler):
 
                 import base64
 
-                raw_bytes = base64.b64decode(audio_data)
+                if not isinstance(audio_data, str):
+                    raise RuntimeError("audio_data must be a base64 string.")
+                raw_bytes = base64.b64decode(audio_data, validate=True)
+                if len(raw_bytes) > MAX_UPLOAD_BYTES:
+                    raise RuntimeError("Audio file is too large. Limit: 64 MB.")
                 REFS_DIR.mkdir(parents=True, exist_ok=True)
                 file_path = REFS_DIR / f"{character}_{emotion}.{ext}"
                 file_path.write_bytes(raw_bytes)
@@ -252,26 +268,27 @@ class GuiHandler(SimpleHTTPRequestHandler):
             if not text:
                 raise RuntimeError("请先生成或填写口音 Prompt。")
             output_name = safe_name(str(payload.get("outputName") or "beijixiong"))
-            output = OUTPUT_DIR / f"{output_name}_{character}_{emotion}_{int(time.time())}.wav"
+            output = OUTPUT_DIR / f"{output_name}_{character}_{emotion}_{time.time_ns()}.wav"
 
             speed = float(payload.get("speed") or DEFAULT_SPEED)
             speed_pitch = float(payload.get("speedPitch") or DEFAULT_SPEED_PITCH)
 
-            prompt = generate_audio(
-                text,
-                ref_file=ref_file,
-                ref_text=ref_text,
-                output=output,
-                speed=speed,
-                speed_pitch=speed_pitch,
-                max_pause_ms=int(payload.get("maxPauseMs") or DEFAULT_MAX_PAUSE_MS),
-                silence_threshold_db=float(
-                    payload.get("silenceThresholdDb") or DEFAULT_SILENCE_THRESHOLD_DB
-                ),
-                device=DEFAULT_DEVICE,
-                emotion=emotion,
-                prepared_text=True,
-            )
+            with GENERATION_LOCK:
+                prompt = generate_audio(
+                    text,
+                    ref_file=ref_file,
+                    ref_text=ref_text,
+                    output=output,
+                    speed=speed,
+                    speed_pitch=speed_pitch,
+                    max_pause_ms=int(payload.get("maxPauseMs") or DEFAULT_MAX_PAUSE_MS),
+                    silence_threshold_db=float(
+                        payload.get("silenceThresholdDb") or DEFAULT_SILENCE_THRESHOLD_DB
+                    ),
+                    device=DEFAULT_DEVICE,
+                    emotion=emotion,
+                    prepared_text=True,
+                )
             self.send_json(
                 {
                     "ref_file": ref_file,
@@ -288,6 +305,8 @@ class GuiHandler(SimpleHTTPRequestHandler):
 
     def read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
+        if length > MAX_JSON_BYTES:
+            raise RuntimeError("Request body is too large.")
         body = self.rfile.read(length).decode("utf-8")
         if not body:
             return {}
@@ -306,7 +325,7 @@ class GuiHandler(SimpleHTTPRequestHandler):
 
     def serve_file(self, path: Path) -> None:
         path = path.resolve()
-        if not str(path).startswith(str(ROOT)) or not path.is_file():
+        if not is_relative_to(path, ROOT) or not path.is_file():
             self.send_error(404)
             return
         data = path.read_bytes()

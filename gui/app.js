@@ -5,6 +5,7 @@ const state = {
   progressStartedAt: 0,
 };
 
+const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 const $ = (id) => document.getElementById(id);
 
 function preferredTheme() {
@@ -65,7 +66,10 @@ async function requestJson(url, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const data = await response.json();
+  const contentType = response.headers.get("Content-Type") || "";
+  const data = contentType.includes("application/json")
+    ? await response.json()
+    : { error: await response.text() };
   if (!response.ok || data.error) {
     throw new Error(data.error || `HTTP ${response.status}`);
   }
@@ -302,6 +306,9 @@ async function uploadReference() {
   setStatus("上传中...");
   try {
     const file = fileInput.files[0];
+    if (file.size > MAX_UPLOAD_BYTES) {
+      throw new Error("参考音频不能超过 64 MB。");
+    }
     const ext = file.name.split(".").pop() || "wav";
     const arrayBuffer = await file.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);

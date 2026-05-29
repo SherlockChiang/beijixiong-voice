@@ -4,7 +4,9 @@ import argparse
 import math
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 DEFAULT_SPEED_PITCH = 1.0
 DEFAULT_MAX_PAUSE_MS = 0
@@ -27,6 +29,16 @@ EMOTION_SPEED_FACTORS = {
     "cry": 0.70,
     "soft": 0.92,
 }
+
+
+@dataclass(frozen=True)
+class F5TTSKey:
+    device: str
+    ckpt_file: str
+    vocoder_path: str
+
+
+_F5TTS_CACHE: dict[F5TTSKey, Any] = {}
 
 # ── Pinyin accent pipeline ──────────────────────────────────────────────────
 
@@ -188,6 +200,19 @@ def prepare_generation_text(
     if accent:
         final_text = accent_chinese(final_text, intensity=accent_intensity)
     return final_text
+
+
+def resolve_device(device: str) -> str:
+    if device != "cuda":
+        return device
+    try:
+        import torch
+    except ImportError:
+        return device
+    if torch.cuda.is_available():
+        return device
+    print("Warning: CUDA is not available; falling back to CPU.")
+    return "cpu"
 
 
 def scan_references(refs_dir: Path) -> dict:
@@ -355,6 +380,20 @@ def patch_whisper_local() -> None:
     utils_infer.initialize_asr_pipeline = _init_asr
 
 
+def get_f5tts(device: str, ckpt_file: str, vocoder_path: str):
+    from f5_tts.api import F5TTS
+
+    key = F5TTSKey(device=device, ckpt_file=ckpt_file, vocoder_path=vocoder_path)
+    if key not in _F5TTS_CACHE:
+        _F5TTS_CACHE[key] = F5TTS(
+            model="F5TTS_v1_Base",
+            device=device,
+            ckpt_file=ckpt_file,
+            vocoder_local_path=vocoder_path or None,
+        )
+    return _F5TTS_CACHE[key]
+
+
 def compress_long_silences(
     audio_array,
     sample_rate: int,
@@ -461,6 +500,7 @@ def generate_audio(
         ckpt_file = str(DEFAULT_CKPT_FILE)
     if not vocoder_path and DEFAULT_VOCODER_PATH.is_dir():
         vocoder_path = str(DEFAULT_VOCODER_PATH)
+    device = resolve_device(device)
 
     ckpt_label = Path(ckpt_file).name if ckpt_file else "huggingface"
     vocoder_label = Path(vocoder_path).name if vocoder_path else "huggingface"
@@ -483,12 +523,7 @@ def generate_audio(
     except Exception:
         pass
 
-    tts = F5TTS(
-        model="F5TTS_v1_Base",
-        device=device,
-        ckpt_file=ckpt_file,
-        vocoder_local_path=vocoder_path or None,
-    )
+    tts = get_f5tts(device, ckpt_file, vocoder_path)
     if not prepared_text:
         text = prepare_generation_text(
             text,

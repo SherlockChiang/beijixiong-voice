@@ -5,16 +5,18 @@ $venvPython = Join-Path $root ".venv\Scripts\python.exe"
 $serverScript = Join-Path $root "gui_server.py"
 $url = "http://127.0.0.1:7860"
 
-function Stop-ExistingServer {
-    $portLine = netstat -ano 2>$null | Select-String ":7860\s.*LISTENING"
-    if ($portLine) {
-        $oldPid = ($portLine -split "\s+")[-1]
-        if ($oldPid -match "^\d+$") {
-            Write-Host "Killing existing server (PID $oldPid)..."
-            Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 500
-        }
+function Test-GuiServer {
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri "$url/api/config" -TimeoutSec 1
+        return $response.StatusCode -eq 200
+    } catch {
+        return $false
     }
+}
+
+function Test-PortInUse {
+    $portLine = netstat -ano 2>$null | Select-String ":7860\s.*LISTENING"
+    return [bool]$portLine
 }
 
 if (Test-Path -LiteralPath $venvPython) {
@@ -24,7 +26,15 @@ if (Test-Path -LiteralPath $venvPython) {
     $python = "python"
 }
 
-Stop-ExistingServer
+if (Test-GuiServer) {
+    Start-Process $url
+    Write-Host "Beijixiong Voice GUI already running: $url"
+    exit 0
+}
+
+if (Test-PortInUse) {
+    throw "Port 7860 is already in use by another process. Stop it or change the server port before starting the GUI."
+}
 
 # Open browser in background after a short delay
 Start-Job -ScriptBlock {
